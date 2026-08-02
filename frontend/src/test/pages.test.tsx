@@ -382,11 +382,13 @@ describe('Billing', () => {
     ]);
     renderWithProviders(<Billing />);
 
-    const plan = await screen.findByTestId('plan-card');
-    expect(within(plan).getByText('FREE')).toBeInTheDocument();
+    // Wait on the *content*, not the container: the card mounts showing
+    // "Loading…" before the subscription fetch resolves.
+    const plan = screen.getByTestId('plan-card');
+    expect(await within(plan).findByText('FREE')).toBeInTheDocument();
 
     const usage = screen.getByTestId('usage-card');
-    expect(within(usage).getByText('12')).toBeInTheDocument();
+    expect(await within(usage).findByText('12')).toBeInTheDocument();
     expect(within(usage).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '12');
     expect(screen.getAllByRole('button', { name: /upgrade to pro/i }).length).toBeGreaterThan(0);
   });
@@ -414,9 +416,9 @@ describe('Billing', () => {
     ]);
     renderWithProviders(<Billing />);
 
-    const plan = await screen.findByTestId('plan-card');
-    expect(within(plan).getByText('PRO')).toBeInTheDocument();
-    expect(screen.getByText('∞', { exact: false })).toBeInTheDocument();
+    const plan = screen.getByTestId('plan-card');
+    expect(await within(plan).findByText('PRO')).toBeInTheDocument();
+    expect(await screen.findByText('∞', { exact: false })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /upgrade to pro/i })).not.toBeInTheDocument();
   });
 });
