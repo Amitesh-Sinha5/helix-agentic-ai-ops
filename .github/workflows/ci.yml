@@ -177,9 +177,11 @@ jobs:
 
       - name: Smoke-test the backend image
         run: |
+          # No DATABASE_URL override: the image's own default (/data/helix.db)
+          # is what a real deployment without Postgres would use, so that is
+          # what the smoke test must exercise.
           docker run -d --name helix-smoke -p 8000:8000 \
             -e LLM_PROVIDER=mock \
-            -e DATABASE_URL="sqlite+aiosqlite:///./smoke.db" \
             -e JWT_SECRET_KEY=smoke \
             helix-backend:${{ github.sha }}
 

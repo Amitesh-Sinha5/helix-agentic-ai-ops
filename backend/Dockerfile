@@ -49,9 +49,17 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 RUN python -m scripts.train_classifier --quiet \
     && chown helix:helix app/support/classifier.pkl
 
-# Writable state: Chroma's index lives here.
-RUN mkdir -p /app/.chroma && chown -R helix:helix /app/.chroma
-VOLUME ["/app/.chroma"]
+# All writable state lives under /data, never in /app.
+#
+# /app is deliberately left root-owned and read-only to the app user, so a
+# compromised process cannot rewrite its own code. That means the runtime user
+# cannot create files there either -- which is exactly why a relative SQLite
+# path like `sqlite:///./helix.db` fails in this image. Both the default
+# database and the Chroma index therefore point at /data.
+RUN mkdir -p /data/chroma && chown -R helix:helix /data
+ENV DATABASE_URL="sqlite+aiosqlite:////data/helix.db" \
+    CHROMA_PERSIST_DIR="/data/chroma"
+VOLUME ["/data"]
 
 USER helix
 EXPOSE 8000

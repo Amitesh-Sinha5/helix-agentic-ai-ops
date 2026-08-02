@@ -61,14 +61,14 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production}
-      CHROMA_PERSIST_DIR: /app/.chroma
+      CHROMA_PERSIST_DIR: /data/chroma
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       BILLING_SUCCESS_URL: ${BILLING_SUCCESS_URL:-http://localhost:5173/billing?status=success}
       BILLING_CANCEL_URL: ${BILLING_CANCEL_URL:-http://localhost:5173/billing?status=cancelled}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
     volumes:
-      - chroma-data:/app/.chroma
+      - chroma-data:/data/chroma
     depends_on:
       postgres:
         condition: service_healthy
