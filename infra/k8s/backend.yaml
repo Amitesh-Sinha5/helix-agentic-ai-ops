@@ -1,0 +1,190 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helix-backend-config
+  labels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: backend }
+data:
+  ENVIRONMENT: "production"
+  DEBUG: "false"
+  LLM_PROVIDER: "anthropic"
+  EMBEDDING_PROVIDER: "openai"
+  REDIS_REQUIRED: "true"
+  RATE_LIMIT_ENABLED: "true"
+  CHROMA_PERSIST_DIR: "/data/chroma"
+  # Replicas must not race to migrate the same database; a Job owns migrations.
+  RUN_MIGRATIONS: "false"
+  CORS_ORIGINS: "https://helix.example.com"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: helix-backend-secrets
+  labels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: backend }
+type: Opaque
+stringData:
+  # Placeholders. In a real cluster these come from External Secrets, Sealed
+  # Secrets or the cloud provider's secret store — never from this file.
+  DATABASE_URL: "postgresql+asyncpg://helix:CHANGE_ME@postgres:5432/helix"
+  REDIS_URL: "redis://redis:6379/0"
+  JWT_SECRET_KEY: "CHANGE_ME"
+  ANTHROPIC_API_KEY: "CHANGE_ME"
+  OPENAI_API_KEY: "CHANGE_ME"
+  STRIPE_SECRET_KEY: "CHANGE_ME"
+  STRIPE_WEBHOOK_SECRET: "CHANGE_ME"
+
+---
+# Migrations run once per deploy, before the new pods take traffic.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: helix-migrate
+  labels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: migrate }
+  annotations:
+    # With Helm/Argo this is a pre-upgrade hook; plain kubectl needs the Job
+    # recreated per release (the name should carry the release version).
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: migrate }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: ghcr.io/OWNER/helix-backend:latest
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef: { name: helix-backend-config }
+            - secretRef: { name: helix-backend-secrets }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helix-backend
+  labels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: backend }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: backend }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: backend }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: backend
+          image: ghcr.io/OWNER/helix-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8000 }
+          envFrom:
+            - configMapRef: { name: helix-backend-config }
+            - secretRef: { name: helix-backend-secrets }
+          resources:
+            # The floor covers the sklearn model plus the Chroma index; the
+            # ceiling leaves headroom for concurrent agent graphs.
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+          startupProbe:
+            # Generous: the container loads the classifier and opens Chroma
+            # before it can serve. Failing startup must not look like liveness.
+            httpGet: { path: /health, port: http }
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # Chroma writes to its persist dir
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: chroma, mountPath: /data/chroma }
+      volumes:
+        - name: chroma
+          persistentVolumeClaim: { claimName: helix-chroma }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: helix-chroma
+  labels: { app.kubernetes.io/name: helix }
+spec:
+  # ReadWriteMany because replicas share one index. On a provider without RWX,
+  # run Chroma as its own service instead of a shared volume.
+  accessModes: ["ReadWriteMany"]
+  resources:
+    requests: { storage: 10Gi }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: helix-backend
+  labels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: backend }
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: helix, app.kubernetes.io/component: backend }
+  ports:
+    - { name: http, port: 80, targetPort: http, protocol: TCP }
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: helix-backend
+  labels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: backend }
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: helix-backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+    - type: Resource
+      resource: { name: memory, target: { type: Utilization, averageUtilization: 80 } }
+  behavior:
+    scaleUp:
+      # Agent requests are long; scale out promptly when they queue.
+      stabilizationWindowSeconds: 30
+      policies: [{ type: Percent, value: 100, periodSeconds: 30 }]
+    scaleDown:
+      # Slow to scale in, so a lull does not evict pods holding open WebSockets.
+      stabilizationWindowSeconds: 300
+      policies: [{ type: Pods, value: 1, periodSeconds: 60 }]
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: helix-backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: backend }

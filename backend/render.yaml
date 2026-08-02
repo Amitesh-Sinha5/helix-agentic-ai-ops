@@ -1,0 +1,76 @@
+# Render blueprint for the Helix backend.
+#
+# Render (not Vercel) hosts the API because Helix needs a long-lived process:
+# WebSocket trace streams, an in-process Chroma index, and LangGraph state that
+# outlives a single serverless invocation.
+#
+# Deploy: point Render at this repo; it reads this file from backend/.
+
+services:
+  - type: web
+    name: helix-backend
+    runtime: python
+    plan: starter # WebSockets and a persistent disk need a paid instance
+    region: oregon
+    rootDir: backend
+    healthCheckPath: /health
+
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      python -m scripts.train_classifier --quiet
+
+    # Migrations run here, before the new instance takes traffic.
+    preDeployCommand: alembic upgrade head
+
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+    # Chroma's index must survive restarts and deploys.
+    disk:
+      name: helix-chroma
+      mountPath: /var/data/chroma
+      sizeGB: 10
+
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: RUN_MIGRATIONS
+        value: "false" # preDeployCommand owns migrations
+      - key: CHROMA_PERSIST_DIR
+        value: /var/data/chroma
+      - key: REDIS_REQUIRED
+        value: "true"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+      # Render generates a strong value once and keeps it stable across deploys.
+      - key: JWT_SECRET_KEY
+        generateValue: true
+
+      # --- set these in the Render dashboard -----------------------------
+      - key: DATABASE_URL # Neon/Supabase, must use the postgresql+asyncpg:// scheme
+        sync: false
+      - key: REDIS_URL # Upstash, rediss://
+        sync: false
+      - key: LLM_PROVIDER
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: EMBEDDING_PROVIDER
+        sync: false
+      - key: CORS_ORIGINS # exactly the Vercel domain, no wildcard
+        sync: false
+      - key: BILLING_SUCCESS_URL
+        sync: false
+      - key: BILLING_CANCEL_URL
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_ID_PRO
+        sync: false

@@ -1,0 +1,50 @@
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Application state ------------------------------------------------------
+*.db
+*.sqlite3
+.chroma/
+.chroma-*/
+
+# The classifier is a build product, reproducible with:
+#   python -m scripts.train_classifier
+backend/app/support/classifier.pkl
+
+# --- Node -------------------------------------------------------------------
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# --- Test artefacts ---------------------------------------------------------
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# --- Secrets ----------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- Terraform --------------------------------------------------------------
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# --- Editors / OS -----------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp

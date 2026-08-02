@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-07-31T23:04:13.047Z",
+  "base_url": "http://127.0.0.1:8010",
+  "requests": 5106,
+  "requests_per_second": 50.94,
+  "failed_rate": 0,
+  "latency_ms": {
+    "avg": 6.6,
+    "med": 4.9,
+    "p90": 10.5,
+    "p95": 19,
+    "max": 182
+  },
+  "agent_path_ms": {
+    "avg": 26.6,
+    "p95": 38.5
+  },
+  "cached_path_ms": {
+    "avg": 5.5,
+    "p95": 10.7
+  },
+  "cache_hits": 4848,
+  "cache_misses": 256,
+  "abstentions": 244,
+  "answered_rate": 0.9522,
+  "max_vus": 30
+}

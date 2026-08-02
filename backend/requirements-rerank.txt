@@ -1,0 +1,11 @@
+# Optional heavyweight extras for the cross-encoder reranker.
+#
+# Helix runs fine without these: `app/rag/retrieval.py` lazily attempts to load a
+# sentence-transformers CrossEncoder and transparently falls back to a lexical
+# overlap reranker when the package (or the model weights) are unavailable, so
+# CI and `docker-compose up` stay light. Install these to get the real thing:
+#
+#     pip install -r requirements-rerank.txt
+#     # then set RERANKER_ENABLED=true
+sentence-transformers==3.3.1
+torch==2.5.1

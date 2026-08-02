@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.chroma/
+.chroma-*/
+*.db
+.env
+.env.*
+!.env.example
+htmlcov/
+.coverage
+test-results/

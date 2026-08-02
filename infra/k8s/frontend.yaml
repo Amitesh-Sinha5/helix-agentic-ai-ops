@@ -1,0 +1,88 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helix-frontend
+  labels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: frontend }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: frontend }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: frontend }
+    spec:
+      containers:
+        - name: frontend
+          # The API URL is compiled into the bundle at build time, so the image
+          # tag is environment-specific — there is no runtime env var to set.
+          image: ghcr.io/OWNER/helix-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 80 }
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: helix-frontend
+  labels: { app.kubernetes.io/name: helix, app.kubernetes.io/component: frontend }
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: helix, app.kubernetes.io/component: frontend }
+  ports:
+    - { name: http, port: 80, targetPort: http, protocol: TCP }
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: helix
+  labels: { app.kubernetes.io/name: helix }
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Agent requests take seconds and WebSocket traces stay open for the whole
+    # request, so the default 60s proxy timeouts are far too short.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [helix.example.com, api.helix.example.com]
+      secretName: helix-tls
+  rules:
+    # Separate hosts, not shared paths. The SPA and the API genuinely collide on
+    # /billing, /support, /observability and /code-review -- each is both a
+    # client-side route and an API route -- so path-based splitting on one host
+    # would send users to JSON instead of the page. A subdomain also matches how
+    # the frontend is built (VITE_API_URL is an absolute origin) and keeps the
+    # CORS allow-list meaningful.
+    - host: helix.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: helix-frontend, port: { number: 80 } } }
+
+    - host: api.helix.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: helix-backend, port: { number: 80 } } }

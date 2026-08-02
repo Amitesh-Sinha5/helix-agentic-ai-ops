@@ -1,0 +1,155 @@
+{
+  "description": "Golden evaluation set for the Helix quality gate. Doc Q&A cases are scored with real RAG metrics (faithfulness, answer relevance, context precision); the Code Review and Support Triage cases assert structured-output correctness.",
+  "corpus": [
+    {
+      "id": "policy",
+      "title": "Subscription and Refund Policy",
+      "collection": "documents",
+      "source": "policy.md",
+      "text": "Helix Subscription and Refund Policy\n\nTrial period. Every new Helix workspace begins with a free trial that lasts 14 days from the date of signup. No credit card is required to start the trial.\n\nRefunds. Customers may request a full refund within 30 days of their first payment. Approved refunds are issued back to the original payment method within 5 to 10 business days.\n\nPlan limits. The Free plan allows 20 agent requests per day per user. The Pro plan removes the daily request cap entirely and adds priority support. Enterprise customers receive a dedicated support engineer and a 99.9 percent uptime guarantee.\n\nData retention. Documents uploaded to Helix are retained for 90 days after deletion in cold storage before being permanently destroyed. Audit logs are retained for 12 months.\n\nSecurity. Helix is SOC 2 Type II certified. All data is encrypted at rest with AES-256 and in transit with TLS 1.3."
+    },
+    {
+      "id": "engineering",
+      "title": "Engineering Handbook",
+      "collection": "documents",
+      "source": "handbook.md",
+      "text": "Helix Engineering Handbook\n\nDeployments. Production deploys run every weekday at 14:00 UTC and require two approving reviews on the pull request. Hotfixes may bypass the schedule with an incident commander's approval.\n\nOn-call. The on-call rotation is one week long and changes every Monday at 10:00 UTC. The primary on-call engineer must acknowledge a page within 5 minutes.\n\nIncident severity. A Sev1 incident is a total outage or confirmed data loss and pages the on-call engineer immediately. A Sev2 is a major feature degraded for more than 15 minutes. A Sev3 is a minor defect with a workaround.\n\nCode review. Every pull request requires at least one approving review, and any change touching authentication or billing requires a second reviewer from the security guild."
+    },
+    {
+      "id": "support_kb",
+      "title": "Support Knowledge Base",
+      "collection": "knowledge_base",
+      "source": "kb.md",
+      "text": "Helix Support Knowledge Base\n\nPassword resets. If a customer cannot sign in, direct them to the Forgot Password link on the login page. Reset emails are delivered within 5 minutes.\n\nDuplicate charges. When a customer reports being charged twice, verify the transaction in the billing portal. Confirmed duplicate charges are refunded in full within 5 to 10 business days.\n\nService outages. For a reported outage, confirm the status page first. Outages affecting more than one customer are escalated immediately to the on-call engineer.\n\nData export. Customers can export their data from Settings, then Export, in either JSON or CSV format."
+    }
+  ],
+  "doc_qa": [
+    {
+      "id": "dq-01",
+      "question": "How long is the free trial?",
+      "ground_truth": "The free trial lasts 14 days from the date of signup.",
+      "expected_found": true,
+      "must_contain": ["14 days"]
+    },
+    {
+      "id": "dq-02",
+      "question": "How long do customers have to request a refund?",
+      "ground_truth": "Customers may request a full refund within 30 days of their first payment.",
+      "expected_found": true,
+      "must_contain": ["30 days"]
+    },
+    {
+      "id": "dq-03",
+      "question": "How many agent requests per day does the Free plan allow?",
+      "ground_truth": "The Free plan allows 20 agent requests per day per user.",
+      "expected_found": true,
+      "must_contain": ["20"]
+    },
+    {
+      "id": "dq-04",
+      "question": "How long are uploaded documents retained after deletion?",
+      "ground_truth": "Documents are retained for 90 days after deletion in cold storage.",
+      "expected_found": true,
+      "must_contain": ["90 days"]
+    },
+    {
+      "id": "dq-05",
+      "question": "Which compliance certification does Helix hold?",
+      "ground_truth": "Helix is SOC 2 Type II certified.",
+      "expected_found": true,
+      "must_contain": ["SOC 2"]
+    },
+    {
+      "id": "dq-06",
+      "question": "When do production deploys run?",
+      "ground_truth": "Production deploys run every weekday at 14:00 UTC.",
+      "expected_found": true,
+      "must_contain": ["14:00"]
+    },
+    {
+      "id": "dq-07",
+      "question": "How long is the on-call rotation?",
+      "ground_truth": "The on-call rotation is one week long and changes every Monday at 10:00 UTC.",
+      "expected_found": true,
+      "must_contain": ["week"]
+    },
+    {
+      "id": "dq-08",
+      "question": "What qualifies as a Sev1 incident?",
+      "ground_truth": "A Sev1 incident is a total outage or confirmed data loss and pages the on-call engineer immediately.",
+      "expected_found": true,
+      "must_contain": ["outage"]
+    },
+    {
+      "id": "dq-09",
+      "question": "How many approving reviews does a production deploy require?",
+      "ground_truth": "Production deploys require two approving reviews on the pull request.",
+      "expected_found": true,
+      "must_contain": ["two"]
+    },
+    {
+      "id": "dq-10",
+      "question": "How is data encrypted at rest?",
+      "ground_truth": "All data is encrypted at rest with AES-256.",
+      "expected_found": true,
+      "must_contain": ["AES-256"]
+    },
+    {
+      "id": "dq-11",
+      "question": "What is the recommended nitrogen mix for scuba diving below 40 metres?",
+      "ground_truth": "Not covered by the indexed documents.",
+      "expected_found": false,
+      "must_contain": []
+    },
+    {
+      "id": "dq-12",
+      "question": "Which football team won the 1994 World Cup final?",
+      "ground_truth": "Not covered by the indexed documents.",
+      "expected_found": false,
+      "must_contain": []
+    }
+  ],
+  "code_review": [
+    {
+      "id": "cr-01",
+      "code": "import subprocess\n\ndef run(cmd):\n    subprocess.run('sh -c ' + cmd, shell=True)\n",
+      "expected_verdict": "request_changes",
+      "must_flag": ["shell injection"]
+    },
+    {
+      "id": "cr-02",
+      "code": "PASSWORD = \"hunter2-super-secret-value\"\n\ndef login(user):\n    return user.password == PASSWORD\n",
+      "expected_verdict": "request_changes",
+      "must_flag": ["hardcoded credential"]
+    },
+    {
+      "id": "cr-03",
+      "code": "def double(value: int) -> int:\n    \"\"\"Return twice the given value.\"\"\"\n    return value * 2\n",
+      "expected_verdict": "approve",
+      "must_flag": []
+    }
+  ],
+  "support_triage": [
+    {
+      "id": "st-01",
+      "subject": "Charged twice",
+      "body": "I was charged twice for my subscription this month, please refund the duplicate payment.",
+      "expected_category": "billing",
+      "expected_escalate": false
+    },
+    {
+      "id": "st-02",
+      "subject": "Everything is down",
+      "body": "Production is down and completely unreachable for all of our users. This is a critical outage.",
+      "expected_category": "bug",
+      "expected_escalate": true
+    },
+    {
+      "id": "st-03",
+      "subject": "Export question",
+      "body": "How do I export my data as JSON? There is no rush on this one.",
+      "expected_category": "how_to",
+      "expected_escalate": false
+    }
+  ]
+}
