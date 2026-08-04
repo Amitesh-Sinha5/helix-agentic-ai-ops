@@ -423,3 +423,83 @@ async def test_support_kb_retrieval_is_scoped_to_the_owner(
     )
     assert response.status_code == 201
     assert response.json()["kb_sources"] == [], "leaked another user's knowledge base"
+
+
+# --------------------------------------------------------------------------- #
+# Graceful degradation when a model cannot satisfy a guardrail
+# --------------------------------------------------------------------------- #
+
+
+def _fail_guardrail_for(monkeypatch, *operations: str):
+    """Make `validated_completion` fail for specific nodes only.
+
+    Simulates a weaker model (a small local one, say) that cannot reliably emit
+    schema-valid JSON for a given node.
+    """
+    from app.core.guardrails import GuardrailViolation
+    from app.rag import agents as agents_module
+
+    real = agents_module.validated_completion
+
+    async def flaky(llm, model, prompt, *, operation, **kwargs):
+        if operation in operations:
+            raise GuardrailViolation(f"forced failure for {operation}")
+        return await real(llm, model, prompt, operation=operation, **kwargs)
+
+    monkeypatch.setattr(agents_module, "validated_completion", flaky)
+
+
+async def test_optional_node_failure_does_not_fail_the_request(
+    user_client: httpx.AsyncClient, ingested_policy, monkeypatch
+):
+    """An unusable tool-router output must degrade, not 500 the whole query.
+
+    The tool router is an optimisation: if we cannot decide whether a tool is
+    needed, answering from the documents is a perfectly good outcome.
+    """
+    _fail_guardrail_for(monkeypatch, "rag.tool_router", "rag.self_critique")
+
+    telemetry = Telemetry(pod="doc_qa", request_id="degrade-optional")
+    result = await DocQAPipeline(TracedLLM(telemetry), telemetry).run(
+        "How long does the free trial last?", collection="documents"
+    )
+
+    assert result["found"] is True, "an optional node failing should not lose the answer"
+    assert "14 days" in result["answer"]
+    assert result["tool_invocations"] == []
+
+
+async def test_groundedness_failure_fails_closed(
+    user_client: httpx.AsyncClient, ingested_policy, monkeypatch
+):
+    """If the answer cannot be verified, abstain -- never ship it unverified.
+
+    This is the asymmetry that matters: optional nodes fail open, but
+    "we could not check this" must never degrade into "looks fine".
+    """
+    _fail_guardrail_for(monkeypatch, "rag.groundedness")
+
+    telemetry = Telemetry(pod="doc_qa", request_id="degrade-groundedness")
+    result = await DocQAPipeline(TracedLLM(telemetry), telemetry).run(
+        "How long does the free trial last?", collection="documents"
+    )
+
+    assert result["found"] is False, "unverifiable answers must not be returned"
+    assert result["answer"] == NOT_FOUND
+    assert result["groundedness"]["grounded"] is False
+    assert result["citations"] == []
+
+
+async def test_sufficiency_failure_still_answers(
+    user_client: httpx.AsyncClient, ingested_policy, monkeypatch
+):
+    """The sufficiency check is advisory; the validator remains the gate."""
+    _fail_guardrail_for(monkeypatch, "rag.context_sufficiency")
+
+    telemetry = Telemetry(pod="doc_qa", request_id="degrade-sufficiency")
+    result = await DocQAPipeline(TracedLLM(telemetry), telemetry).run(
+        "How long does the free trial last?", collection="documents"
+    )
+
+    assert result["found"] is True
+    assert "14 days" in result["answer"]

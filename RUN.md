@@ -192,6 +192,35 @@ COST_PER_1K_COMPLETION_TOKENS=0.015
 Expect **seconds**, not milliseconds, per uncached question — the Doc Q&A graph
 makes 5–7 model calls. That is what the live trace is for.
 
+### Running for free with a local model
+
+`OPENAI_BASE_URL` points the OpenAI provider at any compatible server, so no
+API key is needed:
+
+```bash
+ollama serve &
+ollama pull qwen2.5:7b-instruct
+
+cd backend
+LLM_PROVIDER=openai \
+  OPENAI_BASE_URL=http://localhost:11434/v1 \
+  OPENAI_MODEL=qwen2.5:7b-instruct \
+  .venv/bin/uvicorn app.main:app --reload
+```
+
+The same variable works for Groq, OpenRouter, Together, LM Studio and vLLM —
+swap the URL and pass that service's key as `OPENAI_API_KEY`.
+
+**Size the model to your VRAM.** On a 16 GB Mac (~11.8 GB usable) a 15 GB model
+does not fit: it swaps to SSD and drops to *0.01 tokens/sec*, roughly 20 minutes
+per question. A 3B model measured **27 tok/s** on the same machine — about 4
+seconds per question. Check with `ollama ps` that `PROCESSOR` says `100% GPU`.
+
+**Prefer 7B+ for this pipeline.** Every guardrailed node needs schema-valid
+JSON. A 3B model manages the simple ones but fumbles others; optional nodes now
+degrade gracefully rather than failing the request, but answer quality still
+suffers. `qwen2.5:7b-instruct` is a good balance that fits comfortably.
+
 ---
 
 ## Make targets

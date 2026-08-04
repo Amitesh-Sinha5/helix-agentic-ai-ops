@@ -193,6 +193,9 @@ async def validated_completion(
     call_kwargs = dict(kwargs)
     call_kwargs["system"] = system
     call_kwargs["task"] = task or operation
+    # This call must produce a schema-valid object, so ask the provider to
+    # constrain decoding to JSON where it supports it.
+    call_kwargs.setdefault("json_mode", True)
     supports_operation = "operation" in getattr(type(llm).complete, "__annotations__", {}) or hasattr(
         llm, "telemetry"
     )

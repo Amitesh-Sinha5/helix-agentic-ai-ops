@@ -26,7 +26,7 @@ from typing import Annotated, Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.config import Settings, get_settings
-from app.core.guardrails import redact_pii, validated_completion
+from app.core.guardrails import GuardrailViolation, redact_pii, validated_completion
 from app.core.prompts import (
     CONTEXT_SUFFICIENCY_SYSTEM,
     GROUNDEDNESS_SYSTEM,
@@ -54,6 +54,24 @@ from app.schemas.rag import (
 logger = logging.getLogger("helix.rag.agents")
 
 NOT_FOUND = "I could not find that in the provided documents."
+
+
+async def _degradable(coro, fallback: Any, node: str) -> Any:
+    """Run a guardrailed node call, falling back instead of failing the request.
+
+    Used only for nodes whose result is an *optimisation*, never for the ones
+    that keep the answer honest. A weaker model (or a bad day for a strong one)
+    can fail to produce schema-valid JSON; when that happens on an optional node
+    the right behaviour is to carry on without it, not to 500 the whole query.
+
+    Groundedness deliberately does NOT use this: it fails closed, because
+    "we could not verify this answer" must never degrade into "ship it".
+    """
+    try:
+        return await coro
+    except GuardrailViolation as exc:
+        logger.warning("node %s produced unusable output, degrading: %s", node, exc)
+        return fallback
 
 
 def owner_scope(owner_id: str | None) -> dict[str, str] | None:
@@ -141,16 +159,20 @@ class DocQAPipeline:
         node, started = "tool_router", time.perf_counter()
         trace = [await self._trace(node, "start", message="Checking whether an external tool is needed")]
 
-        decision = await validated_completion(
-            self.llm,
-            ToolDecision,
-            build_prompt(
-                question=state["question"],
-                available_tools=tool_module.tool_catalogue(),
+        decision = await _degradable(
+            validated_completion(
+                self.llm,
+                ToolDecision,
+                build_prompt(
+                    question=state["question"],
+                    available_tools=tool_module.tool_catalogue(),
+                ),
+                operation="rag.tool_router",
+                task="tool_router",
+                system=TOOL_ROUTER_SYSTEM,
             ),
-            operation="rag.tool_router",
-            task="tool_router",
-            system=TOOL_ROUTER_SYSTEM,
+            fallback=ToolDecision(tool=None),
+            node="tool_router",
         )
 
         updates: dict[str, Any] = {}
@@ -265,13 +287,21 @@ class DocQAPipeline:
                 missing_information=[state["question"]],
             )
         else:
-            verdict = await validated_completion(
-                self.llm,
-                SufficiencyVerdict,
-                build_prompt(question=state["question"], context=format_context(chunks)),
-                operation="rag.context_sufficiency",
-                task="context_sufficiency",
-                system=CONTEXT_SUFFICIENCY_SYSTEM,
+            verdict = await _degradable(
+                validated_completion(
+                    self.llm,
+                    SufficiencyVerdict,
+                    build_prompt(question=state["question"], context=format_context(chunks)),
+                    operation="rag.context_sufficiency",
+                    task="context_sufficiency",
+                    system=CONTEXT_SUFFICIENCY_SYSTEM,
+                ),
+                # Assume sufficient: the retrieved context already cleared the
+                # score floor, and the validator still has the final say.
+                fallback=SufficiencyVerdict(
+                    sufficient=True, confidence=0.0, reason="Sufficiency check unavailable."
+                ),
+                node="context_check",
             )
 
         trace.append(
@@ -303,20 +333,27 @@ class DocQAPipeline:
         trace = [await self._trace(node, "start", message="Rewriting the query and retrying retrieval")]
 
         sufficiency = state.get("sufficiency", {})
-        reformulated = await validated_completion(
-            self.llm,
-            ReformulatedQuery,
-            build_prompt(
-                question=state["question"],
-                failed_query=state.get("current_query", ""),
-                missing_information=", ".join(sufficiency.get("missing_information", [])),
-                # Pseudo-relevance feedback: the first pass's vocabulary is the
-                # best available hint about how the corpus words this topic.
-                context=format_context(state.get("chunks", [])[:3]),
+        reformulated = await _degradable(
+            validated_completion(
+                self.llm,
+                ReformulatedQuery,
+                build_prompt(
+                    question=state["question"],
+                    failed_query=state.get("current_query", ""),
+                    missing_information=", ".join(sufficiency.get("missing_information", [])),
+                    # Pseudo-relevance feedback: the first pass's vocabulary is the
+                    # best available hint about how the corpus words this topic.
+                    context=format_context(state.get("chunks", [])[:3]),
+                ),
+                operation="rag.query_reformulation",
+                task="query_reformulation",
+                system=QUERY_REFORMULATION_SYSTEM,
             ),
-            operation="rag.query_reformulation",
-            task="query_reformulation",
-            system=QUERY_REFORMULATION_SYSTEM,
+            fallback=ReformulatedQuery(
+                query=state.get("current_query") or state["question"],
+                rationale="Reformulation unavailable; retrying the original query.",
+            ),
+            node="reformulate",
         )
 
         trace.append(
@@ -386,17 +423,21 @@ class DocQAPipeline:
         trace = [await self._trace(node, "start", message="Reviewing the draft answer before returning it")]
 
         chunks = [c for c in state.get("chunks", []) if c["score"] >= self.settings.min_retrieval_score]
-        result = await validated_completion(
-            self.llm,
-            CritiqueResult,
-            build_prompt(
-                question=state["question"],
-                draft_answer=state.get("answer", ""),
-                context=format_context(chunks),
+        result = await _degradable(
+            validated_completion(
+                self.llm,
+                CritiqueResult,
+                build_prompt(
+                    question=state["question"],
+                    draft_answer=state.get("answer", ""),
+                    context=format_context(chunks),
+                ),
+                operation="rag.self_critique",
+                task="self_critique",
+                system=SELF_CRITIQUE_SYSTEM,
             ),
-            operation="rag.self_critique",
-            task="self_critique",
-            system=SELF_CRITIQUE_SYSTEM,
+            fallback=CritiqueResult(revised_answer=state.get("answer", ""), changed=False, critique=""),
+            node="self_critique",
         )
 
         answer = redact_pii(result.revised_answer.strip()) or state.get("answer", "")
@@ -421,13 +462,21 @@ class DocQAPipeline:
         if not state.get("found"):
             verdict = GroundednessVerdict(grounded=True, score=1.0, reason="Abstained; nothing to ground.")
         else:
-            verdict = await validated_completion(
-                self.llm,
-                GroundednessVerdict,
-                build_prompt(question=state["question"], answer=answer, context=format_context(chunks)),
-                operation="rag.groundedness",
-                task="groundedness",
-                system=GROUNDEDNESS_SYSTEM,
+            verdict = await _degradable(
+                validated_completion(
+                    self.llm,
+                    GroundednessVerdict,
+                    build_prompt(question=state["question"], answer=answer, context=format_context(chunks)),
+                    operation="rag.groundedness",
+                    task="groundedness",
+                    system=GROUNDEDNESS_SYSTEM,
+                ),
+                # Fail CLOSED. If we cannot verify the answer we must not claim
+                # it is grounded -- the node below turns this into an abstention.
+                fallback=GroundednessVerdict(
+                    grounded=False, score=0.0, reason="Groundedness check unavailable."
+                ),
+                node="validator",
             )
 
         updates: dict[str, Any] = {"groundedness": verdict.model_dump()}

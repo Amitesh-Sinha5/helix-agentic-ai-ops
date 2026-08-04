@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # --- LLM -----------------------------------------------------------------
     llm_provider: LLMProvider = "mock"
     openai_api_key: str | None = None
+    # Any OpenAI-compatible endpoint: Ollama, Groq, OpenRouter, Together,
+    # LM Studio, Gemini's compat layer. Leave unset for OpenAI proper.
+    # This is what makes free/local providers usable without a new backend.
+    openai_base_url: str | None = None
     anthropic_api_key: str | None = None
     llm_model: str = "claude-sonnet-5"
     openai_model: str = "gpt-4o-mini"

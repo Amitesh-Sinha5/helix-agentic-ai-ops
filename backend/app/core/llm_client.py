@@ -665,7 +665,14 @@ class BaseProvider:
     name = "base"
 
     async def complete(
-        self, prompt: str, *, system: str | None, task: str, temperature: float, max_tokens: int
+        self,
+        prompt: str,
+        *,
+        system: str | None,
+        task: str,
+        temperature: float,
+        max_tokens: int,
+        json_mode: bool = False,
     ) -> LLMResponse:
         raise NotImplementedError
 
@@ -682,8 +689,17 @@ class MockProvider(BaseProvider):
         self.calls: list[dict[str, Any]] = []
 
     async def complete(
-        self, prompt: str, *, system: str | None, task: str, temperature: float, max_tokens: int
+        self,
+        prompt: str,
+        *,
+        system: str | None,
+        task: str,
+        temperature: float,
+        max_tokens: int,
+        json_mode: bool = False,
     ) -> LLMResponse:
+        # json_mode is a no-op here: each responder already returns valid JSON
+        # for the tasks that need it.
         text = self.brain.respond(task, prompt, system)
         self.calls.append({"task": task, "prompt": prompt})
         return LLMResponse(
@@ -705,24 +721,52 @@ class OpenAIProvider(BaseProvider):
     def __init__(self, settings: Settings) -> None:
         from openai import AsyncOpenAI  # imported lazily: never needed in mock mode
 
-        if not settings.openai_api_key:
-            raise LLMError("LLM_PROVIDER=openai requires OPENAI_API_KEY")
+        # A custom base_url means a local or third-party OpenAI-compatible
+        # server (Ollama, Groq, OpenRouter, ...). Those either ignore the key
+        # or take it from the URL, so only demand one when talking to OpenAI.
+        if not settings.openai_api_key and not settings.openai_base_url:
+            raise LLMError(
+                "LLM_PROVIDER=openai requires OPENAI_API_KEY, "
+                "or set OPENAI_BASE_URL to point at a compatible server"
+            )
         self.settings = settings
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key, timeout=settings.llm_timeout_seconds)
+        self.client = AsyncOpenAI(
+            # Local servers still expect a non-empty string here.
+            api_key=settings.openai_api_key or "not-needed",
+            base_url=settings.openai_base_url,
+            timeout=settings.llm_timeout_seconds,
+        )
 
     async def complete(
-        self, prompt: str, *, system: str | None, task: str, temperature: float, max_tokens: int
+        self,
+        prompt: str,
+        *,
+        system: str | None,
+        task: str,
+        temperature: float,
+        max_tokens: int,
+        json_mode: bool = False,
     ) -> LLMResponse:
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
+
+        # Constrained decoding when the caller needs JSON. Without this, small
+        # local models wrap their JSON in prose or emit near-miss syntax and the
+        # guardrail rejects them -- correctly, but the request still fails.
+        # Ollama, vLLM and OpenAI all honour this field.
+        extra: dict[str, Any] = {}
+        if json_mode:
+            extra["response_format"] = {"type": "json_object"}
+
         try:
             resp = await self.client.chat.completions.create(
                 model=self.settings.openai_model,
                 messages=messages,  # type: ignore[arg-type]
                 temperature=temperature,
                 max_tokens=max_tokens,
+                **extra,
             )
         except Exception as exc:
             raise LLMError(f"OpenAI call failed: {exc}") from exc
@@ -753,8 +797,17 @@ class AnthropicProvider(BaseProvider):
         self.client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=settings.llm_timeout_seconds)
 
     async def complete(
-        self, prompt: str, *, system: str | None, task: str, temperature: float, max_tokens: int
+        self,
+        prompt: str,
+        *,
+        system: str | None,
+        task: str,
+        temperature: float,
+        max_tokens: int,
+        json_mode: bool = False,
     ) -> LLMResponse:
+        # No response_format on the messages API; the system prompts already
+        # state the required shape, and the guardrail validates it.
         try:
             resp = await self.client.messages.create(
                 model=self.settings.llm_model,
@@ -816,6 +869,7 @@ class LLMClient:
         task: str = "default",
         temperature: float | None = None,
         max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> LLMResponse:
         started = time.perf_counter()
         resp = await self.provider.complete(
@@ -824,6 +878,7 @@ class LLMClient:
             task=task,
             temperature=self.settings.llm_temperature if temperature is None else temperature,
             max_tokens=max_tokens or self.settings.llm_max_tokens,
+            json_mode=json_mode,
         )
         resp.latency_ms = (time.perf_counter() - started) * 1000
         return resp
@@ -839,7 +894,12 @@ class LLMClient:
     ) -> tuple[Any, LLMResponse]:
         """Complete and parse. Returns (parsed, response) so callers keep usage data."""
         resp = await self.complete(
-            prompt, system=system, task=task, temperature=temperature, max_tokens=max_tokens
+            prompt,
+            system=system,
+            task=task,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=True,
         )
         return resp.json(), resp
 
