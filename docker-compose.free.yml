@@ -1,0 +1,71 @@
+# Helix, minimum-footprint edition — for a 1 GB free-tier VM.
+#
+#     docker compose -f docker-compose.free.yml up --build -d
+#
+# Drops the Postgres and Redis containers (~200 MB of RAM) and uses what the
+# backend already supports natively:
+#
+#   * SQLite instead of Postgres. Fine at this scale; the same Alembic
+#     migrations run against it.
+#   * The in-process cache instead of Redis. On a single instance this is not a
+#     downgrade — the semantic cache, rate-limit windows and pub/sub only need
+#     to be shared between replicas, and there is exactly one replica.
+#
+# Run the full docker-compose.yml the moment you have a second instance, or
+# real users: SQLite will not survive concurrent writers, and an in-process
+# cache stops being correct as soon as two instances disagree.
+
+name: helix
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      # Absolute path into the container's writable volume. /app is read-only
+      # to the non-root user by design.
+      DATABASE_URL: sqlite+aiosqlite:////data/helix.db
+      CHROMA_PERSIST_DIR: /data/chroma
+      # Unreachable on purpose: core.cache falls back to an in-process store.
+      # REDIS_REQUIRED stays false so that fallback is allowed.
+      REDIS_URL: redis://127.0.0.1:6399/0
+      REDIS_REQUIRED: "false"
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-mock}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      BILLING_SUCCESS_URL: ${BILLING_SUCCESS_URL:-http://localhost:5173/billing?status=success}
+      BILLING_CANCEL_URL: ${BILLING_CANCEL_URL:-http://localhost:5173/billing?status=cancelled}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+    volumes:
+      - helix-data:/data
+    # Capped so a runaway backend cannot take the whole box down with it; the
+    # host swap created by user-data absorbs the spikes.
+    mem_limit: 700m
+    memswap_limit: 2g
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "5173:80"
+    mem_limit: 64m
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  helix-data:

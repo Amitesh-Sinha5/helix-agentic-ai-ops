@@ -137,7 +137,8 @@ Replace `ghcr.io/OWNER/…` with your registry, and supply real secrets through 
 
 Two routes, documented with a cost breakdown in [`infra/aws/README.md`](infra/aws/README.md):
 
-- **One EC2 instance** (~$0–12/mo) — [`infra/aws/ec2-user-data.sh`](infra/aws/ec2-user-data.sh) runs the whole compose stack on a single box. This is the sensible choice for a portfolio.
+- **Free tier, $0** — [`infra/aws/free-tier/`](infra/aws/free-tier/) Terraform: one `t3.micro`, SQLite and the in-process cache instead of Postgres/Redis containers, plus a spend alarm. Measured at ~191 MB of RAM; 10/10 smoke checks pass. **Start here.**
+- **One EC2 instance** (~$12/mo) — [`infra/aws/ec2-user-data.sh`](infra/aws/ec2-user-data.sh) runs the full compose stack (Postgres + Redis) on a single box.
 - **ECS Fargate** (~$50–70/mo) — [`infra/aws/`](infra/aws/) Terraform: ALB, autoscaled Fargate service, RDS, ElastiCache, EFS for the shared Chroma index, and CloudFront over a private S3 bucket.
 
 ```bash
