@@ -133,6 +133,22 @@ kubectl apply -f infra/k8s/
 
 Replace `ghcr.io/OWNER/…` with your registry, and supply real secrets through External Secrets or your cloud's secret store rather than the placeholder `Secret` manifest.
 
+### AWS
+
+Two routes, documented with a cost breakdown in [`infra/aws/README.md`](infra/aws/README.md):
+
+- **One EC2 instance** (~$0–12/mo) — [`infra/aws/ec2-user-data.sh`](infra/aws/ec2-user-data.sh) runs the whole compose stack on a single box. This is the sensible choice for a portfolio.
+- **ECS Fargate** (~$50–70/mo) — [`infra/aws/`](infra/aws/) Terraform: ALB, autoscaled Fargate service, RDS, ElastiCache, EFS for the shared Chroma index, and CloudFront over a private S3 bucket.
+
+```bash
+cd infra/aws
+terraform init && terraform apply \
+  -var="db_password=..." -var="jwt_secret=..."
+terraform output deploy_commands
+```
+
+Not Lambda or App Runner: Helix holds WebSockets open, keeps a Chroma index on disk, and runs a LangGraph state machine across 5–9 model calls per request.
+
 ### Azure Container Apps
 
 ```bash

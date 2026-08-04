@@ -165,7 +165,7 @@ Every claim below points at the file that implements it.
 | **Docker** | [`docker-compose.yml`](docker-compose.yml) | Multi-stage, non-root, healthchecked; verified 10/10 live |
 | **CI/CD** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Lint, tests, quality gate, E2E, image build + smoke |
 | **Kubernetes** | [`infra/k8s/`](infra/k8s/) | Deployments, HPA, PDB, Ingress — validated with `kubeconform` |
-| **Terraform** | [`infra/terraform/`](infra/terraform/) | Azure Container Apps + Postgres + Redis — `terraform validate` clean |
+| **Terraform** | [`infra/aws/`](infra/aws/) · [`infra/terraform/`](infra/terraform/) | AWS ECS Fargate and Azure Container Apps, both `terraform validate` clean |
 
 ---
 
